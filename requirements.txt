@@ -19,3 +19,4 @@ omegaconf
 pycocotools
 gradio
 peft
+flask
