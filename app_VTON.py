@@ -20,6 +20,8 @@ from preprocess.openpose.run_openpose import OpenPose
 from detectron2.data.detection_utils import convert_PIL_to_numpy,_apply_exif_orientation
 from torchvision.transforms.functional import to_pil_image
 from util.pipeline import quantize_4bit, restart_cpu_offload, torch_gc
+import requests
+from io import BytesIO
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--share", type=str, default=False, help="Set to True to share the app publicly.")
@@ -51,6 +53,11 @@ pipe = None
 UNet_Encoder = None
 example_path = os.path.join(os.path.dirname(__file__), 'example')
 
+def load_image_from_url(url):
+    response = requests.get(url)
+    img = Image.open(BytesIO(response.content))
+    return img
+
 def start_tryon(dict, garm_img, garment_des, category, is_checked, is_checked_crop, denoise_steps, is_randomize_seed, seed, number_of_images):
     global pipe, unet, UNet_Encoder, need_restart_cpu_offloading
 
@@ -81,7 +88,6 @@ def start_tryon(dict, garm_img, garment_des, category, is_checked, is_checked_cr
                                                 torch_dtype=dtype,
             )
 
-        # "stabilityai/stable-diffusion-xl-base-1.0",
         UNet_Encoder = UNet2DConditionModel_ref.from_pretrained(
             model_id,
             subfolder="unet_encoder",
@@ -135,9 +141,6 @@ def start_tryon(dict, garm_img, garment_des, category, is_checked, is_checked_cr
     elif ENABLE_CPU_OFFLOAD:
         pipe.enable_model_cpu_offload()
 
-    #if load_mode != '4bit' :
-    #    pipe.enable_xformers_memory_efficient_attention()    
-
     garm_img= garm_img.convert("RGB").resize((768,1024))
     human_img_orig = dict["background"].convert("RGB")    
     
@@ -162,8 +165,6 @@ def start_tryon(dict, garm_img, garment_des, category, is_checked, is_checked_cr
         mask = mask.resize((768,1024))
     else:
         mask = pil_to_binary_mask(dict['layers'][0].convert("RGB").resize((768, 1024)))
-        # mask = transforms.ToTensor()(mask)
-        # mask = mask.unsqueeze(0)
     
     mask_gray = (1-transforms.ToTensor()(mask)) * tensor_transfrom(human_img)
     mask_gray = to_pil_image((mask_gray+1.0)/2.0)
@@ -172,7 +173,6 @@ def start_tryon(dict, garm_img, garment_des, category, is_checked, is_checked_cr
     human_img_arg = convert_PIL_to_numpy(human_img_arg, format="BGR")
 
     args = apply_net.create_argument_parser().parse_args(('show', './configs/densepose_rcnn_R_50_FPN_s1x.yaml', './ckpt/densepose/model_final_162be9.pkl', 'dp_segm', '-v', '--opts', 'MODEL.DEVICE', 'cuda'))
-    # verbosity = getattr(args, "verbosity", None)
     pose_img = args.func(args,human_img_arg)    
     pose_img = pose_img[:,:,::-1]    
     pose_img = Image.fromarray(pose_img).resize((768,1024))
@@ -184,7 +184,6 @@ def start_tryon(dict, garm_img, garment_des, category, is_checked, is_checked_cr
         pipe.text_encoder_2.to(device)
 
     with torch.no_grad():
-        # Extract the images
         with torch.cuda.amp.autocast(dtype=dtype):
             with torch.no_grad():
                 prompt = "model is wearing " + garment_des
@@ -282,6 +281,8 @@ with image_blocks as demo:
     gr.Markdown("Virtual Try-on with your image and garment image. Check out the [source codes](https://github.com/yisol/IDM-VTON) and the [model](https://huggingface.co/yisol/IDM-VTON)")
     with gr.Row():
         with gr.Column():
+            human_url = gr.Textbox(label='Human Image URL', placeholder='Enter URL of the human image')
+            btn_load_human = gr.Button('Load Human Image')
             imgs = gr.ImageEditor(sources='upload', type="pil", label='Human. Mask with pen or use auto-masking', interactive=True)
             with gr.Row():
                 category = gr.Radio(choices=["upper_body", "lower_body", "dresses"], label="Select Garment Category", value="upper_body")
@@ -296,6 +297,8 @@ with image_blocks as demo:
             )
 
         with gr.Column():
+            garment_url = gr.Textbox(label='Garment Image URL', placeholder='Enter URL of the garment image')
+            btn_load_garment = gr.Button('Load Garment Image')
             garm_img = gr.Image(label="Garment", sources='upload', type="pil")
             with gr.Row(elem_id="prompt-container"):
                 with gr.Row():
@@ -306,14 +309,12 @@ with image_blocks as demo:
                 examples=garm_list_path)
         with gr.Column():
             with gr.Row():
-            # image_out = gr.Image(label="Output", elem_id="output-img", height=400)
                 masked_img = gr.Image(label="Masked image output", elem_id="masked-img",show_share_button=False)
             with gr.Row():
                 btn_open_outputs = gr.Button("Open Outputs Folder")
                 btn_open_outputs.click(fn=open_folder)
         with gr.Column():
             with gr.Row():
-            # image_out = gr.Image(label="Output", elem_id="output-img", height=400)
                 image_gallery = gr.Gallery(label="Generated Images", show_label=True)
             with gr.Row():
                 try_button = gr.Button(value="Try-on")
@@ -323,6 +324,8 @@ with image_blocks as demo:
                 number_of_images = gr.Number(label="Number Of Images To Generate (it will start from your input seed and increment by 1)", minimum=1, maximum=9999, value=1, step=1)
 
 
+    btn_load_human.click(fn=lambda url: load_image_from_url(url), inputs=human_url, outputs=imgs)
+    btn_load_garment.click(fn=lambda url: load_image_from_url(url), inputs=garment_url, outputs=garm_img)
     try_button.click(fn=start_tryon, inputs=[imgs, garm_img, prompt, category, is_checked, is_checked_crop, denoise_steps, is_randomize_seed, seed, number_of_images], outputs=[image_gallery, masked_img],api_name='tryon')
 
 image_blocks.launch(inbrowser=True,share=args.share)
