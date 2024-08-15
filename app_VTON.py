@@ -58,10 +58,10 @@ def load_image_from_url(url):
     img = Image.open(BytesIO(response.content))
     return img
 
-def start_tryon(human_url, garment_url, garment_des, category, is_checked, is_checked_crop, denoise_steps, is_randomize_seed, seed, number_of_images):
+def start_tryon(dict, garm_img, garment_des, category, is_checked, is_checked_crop, denoise_steps, is_randomize_seed, seed, number_of_images):
     global pipe, unet, UNet_Encoder, need_restart_cpu_offloading
 
-    if pipe is None:
+    if pipe == None:
         unet = UNet2DConditionModel.from_pretrained(
             model_id,
             subfolder="unet",
@@ -123,13 +123,13 @@ def start_tryon(human_url, garment_url, garment_des, category, is_checked, is_ch
            
     else:
         if ENABLE_CPU_OFFLOAD:
-            need_restart_cpu_offloading = True
+            need_restart_cpu_offloading =True
     
     torch_gc() 
     parsing_model = Parsing(0)
     openpose_model = OpenPose(0)
     openpose_model.preprocessor.body_estimation.model.to(device)
-    tensor_transform = transforms.Compose(
+    tensor_transfrom = transforms.Compose(
                     [
                         transforms.ToTensor(),
                         transforms.Normalize([0.5], [0.5]),
@@ -141,8 +141,8 @@ def start_tryon(human_url, garment_url, garment_des, category, is_checked, is_ch
     elif ENABLE_CPU_OFFLOAD:
         pipe.enable_model_cpu_offload()
 
-    garm_img = load_image_from_url(garment_url).convert("RGB").resize((768, 1024))
-    human_img_orig = load_image_from_url(human_url).convert("RGB")
+    garm_img= garm_img.convert("RGB").resize((768,1024))
+    human_img_orig = dict["background"].convert("RGB")    
     
     if is_checked_crop:
         width, height = human_img_orig.size
@@ -164,9 +164,9 @@ def start_tryon(human_url, garment_url, garment_des, category, is_checked, is_ch
         mask, mask_gray = get_mask_location('hd', category, model_parse, keypoints)
         mask = mask.resize((768,1024))
     else:
-        mask = pil_to_binary_mask(human_img_orig.resize((768, 1024)))
+        mask = pil_to_binary_mask(dict['layers'][0].convert("RGB").resize((768, 1024)))
     
-    mask_gray = (1-transforms.ToTensor()(mask)) * tensor_transform(human_img)
+    mask_gray = (1-transforms.ToTensor()(mask)) * tensor_transfrom(human_img)
     mask_gray = to_pil_image((mask_gray+1.0)/2.0)
 
     human_img_arg = _apply_exif_orientation(human_img.resize((384,512)))
@@ -220,8 +220,8 @@ def start_tryon(human_url, garment_url, garment_des, category, is_checked, is_ch
                             negative_prompt=negative_prompt,
                         )
 
-                    pose_img =  tensor_transform(pose_img).unsqueeze(0).to(device, dtype)
-                    garm_tensor =  tensor_transform(garm_img).unsqueeze(0).to(device, dtype)
+                    pose_img =  tensor_transfrom(pose_img).unsqueeze(0).to(device,dtype)
+                    garm_tensor =  tensor_transfrom(garm_img).unsqueeze(0).to(device,dtype)
                     results = []
                     current_seed = seed
                     for i in range(number_of_images):  
@@ -231,16 +231,16 @@ def start_tryon(human_url, garment_url, garment_des, category, is_checked, is_ch
                         current_seed = current_seed + i
 
                         images = pipe(
-                            prompt_embeds=prompt_embeds.to(device, dtype),
-                            negative_prompt_embeds=negative_prompt_embeds.to(device, dtype),
-                            pooled_prompt_embeds=pooled_prompt_embeds.to(device, dtype),
-                            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds.to(device, dtype),
+                            prompt_embeds=prompt_embeds.to(device,dtype),
+                            negative_prompt_embeds=negative_prompt_embeds.to(device,dtype),
+                            pooled_prompt_embeds=pooled_prompt_embeds.to(device,dtype),
+                            negative_pooled_prompt_embeds=negative_pooled_prompt_embeds.to(device,dtype),
                             num_inference_steps=denoise_steps,
                             generator=generator,
                             strength = 1.0,
-                            pose_img = pose_img.to(device, dtype),
-                            text_embeds_cloth=prompt_embeds_c.to(device, dtype),
-                            cloth = garm_tensor.to(device, dtype),
+                            pose_img = pose_img.to(device,dtype),
+                            text_embeds_cloth=prompt_embeds_c.to(device,dtype),
+                            cloth = garm_tensor.to(device,dtype),
                             mask_image=mask,
                             image=human_img, 
                             height=1024,
@@ -253,45 +253,80 @@ def start_tryon(human_url, garment_url, garment_des, category, is_checked, is_ch
                         if is_checked_crop:
                             out_img = images[0].resize(crop_size)        
                             human_img_orig.paste(out_img, (int(left), int(top)))   
-                            results.append(human_img_orig)
+                            img_path = save_output_image(human_img_orig, base_path="outputs", base_filename='img', seed=current_seed)
+                            results.append(img_path)
                         else:
-                            results.append(images[0])
-                    return results[0]  # Return the first generated image
+                            img_path = save_output_image(images[0], base_path="outputs", base_filename='img')
+                            results.append(img_path)
+                    return results, mask_gray
     
-image_blocks = gr.Blocks().queue()
+garm_list = os.listdir(os.path.join(example_path,"cloth"))
+garm_list_path = [os.path.join(example_path,"cloth",garm) for garm in garm_list]
 
+human_list = os.listdir(os.path.join(example_path,"human"))
+human_list_path = [os.path.join(example_path,"human",human) for human in human_list]
+
+human_ex_list = []
+for ex_human in human_list_path:
+    if "Jensen" in ex_human or "sam1 (1)" in ex_human:
+        ex_dict = {}
+        ex_dict['background'] = ex_human
+        ex_dict['layers'] = None
+        ex_dict['composite'] = None
+        human_ex_list.append(ex_dict)
+
+image_blocks = gr.Blocks().queue()
 with image_blocks as demo:
-    gr.Markdown("## V7 - IDM-VTON Dinith: Try-On System")
-    
+    gr.Markdown("## V7 - IDM-VTON Dinith : 1-Click Installers Latest Version On : https://www.patreon.com/posts/103022942")
+    gr.Markdown("Virtual Try-on with your image and garment image. Check out the [source codes](https://github.com/yisol/IDM-VTON) and the [model](https://huggingface.co/yisol/IDM-VTON)")
     with gr.Row():
         with gr.Column():
             human_url = gr.Textbox(label='Human Image URL', placeholder='Enter URL of the human image')
-            garment_url = gr.Textbox(label='Garment Image URL', placeholder='Enter URL of the garment image')
-            garment_description = gr.Textbox(placeholder="Description of garment (e.g., Short Sleeve Round Neck T-shirt)", label="Garment Description")
-            
+            btn_load_human = gr.Button('Load Human Image')
+            imgs = gr.ImageEditor(sources='upload', type="pil", label='Human. Mask with pen or use auto-masking', interactive=True)
             with gr.Row():
                 category = gr.Radio(choices=["upper_body", "lower_body", "dresses"], label="Select Garment Category", value="upper_body")
-                is_checked = gr.Checkbox(label="Use auto-generated mask (Takes 5 seconds)", value=True)
+                is_checked = gr.Checkbox(label="Yes", info="Use auto-generated mask (Takes 5 seconds)",value=True)
             with gr.Row():
-                is_checked_crop = gr.Checkbox(label="Use auto-crop & resizing", value=True)
-            
-            denoise_steps = gr.Number(label="Denoising Steps", minimum=20, maximum=120, value=30, step=1)
-            seed = gr.Number(label="Seed", minimum=-1, maximum=2147483647, step=1, value=1)
-            is_randomize_seed = gr.Checkbox(label="Randomize seed for each generated image", value=True)
-            number_of_images = gr.Number(label="Number Of Images To Generate", minimum=1, maximum=9999, value=1, step=1)
+                is_checked_crop = gr.Checkbox(label="Yes", info="Use auto-crop & resizing",value=True)
 
-            try_button = gr.Button(value="Try-on")
-            output_image = gr.Image(label="Output Image")
+            example = gr.Examples(
+                inputs=imgs,
+                examples_per_page=2,
+                examples=human_ex_list
+            )
 
-    try_button.click(
-        fn=start_tryon, 
-        inputs=[
-            human_url, garment_url, garment_description, 
-            category, is_checked, is_checked_crop, 
-            denoise_steps, is_randomize_seed, seed, 
-            number_of_images
-        ], 
-        outputs=output_image
-    )
+        with gr.Column():
+            garment_url = gr.Textbox(label='Garment Image URL', placeholder='Enter URL of the garment image')
+            btn_load_garment = gr.Button('Load Garment Image')
+            garm_img = gr.Image(label="Garment", sources='upload', type="pil")
+            with gr.Row(elem_id="prompt-container"):
+                with gr.Row():
+                    prompt = gr.Textbox(placeholder="Description of garment ex) Short Sleeve Round Neck T-shirts", show_label=False, elem_id="prompt")
+            example = gr.Examples(
+                inputs=garm_img,
+                examples_per_page=8,
+                examples=garm_list_path)
+        with gr.Column():
+            with gr.Row():
+                masked_img = gr.Image(label="Masked image output", elem_id="masked-img",show_share_button=False)
+            with gr.Row():
+                btn_open_outputs = gr.Button("Open Outputs Folder")
+                btn_open_outputs.click(fn=open_folder)
+        with gr.Column():
+            with gr.Row():
+                image_gallery = gr.Gallery(label="Generated Images", show_label=True)
+            with gr.Row():
+                try_button = gr.Button(value="Try-on")
+                denoise_steps = gr.Number(label="Denoising Steps", minimum=20, maximum=120, value=30, step=1)
+                seed = gr.Number(label="Seed", minimum=-1, maximum=2147483647, step=1, value=1)
+                is_randomize_seed = gr.Checkbox(label="Randomize seed for each generated image", value=True)  
+                number_of_images = gr.Number(label="Number Of Images To Generate (it will start from your input seed and increment by 1)", minimum=1, maximum=9999, value=1, step=1)
 
-image_blocks.launch(inbrowser=True, share=args.share)
+
+    btn_load_human.click(fn=lambda url: load_image_from_url(url), inputs=human_url, outputs=imgs)
+    btn_load_garment.click(fn=lambda url: load_image_from_url(url), inputs=garment_url, outputs=garm_img)
+    try_button.click(fn=start_tryon, inputs=[imgs, garm_img, prompt, category, is_checked, is_checked_crop, denoise_steps, is_randomize_seed, seed, number_of_images], outputs=[image_gallery, masked_img],api_name='tryon')
+
+image_blocks.launch(inbrowser=True,share=args.share)
+
