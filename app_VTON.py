@@ -281,8 +281,8 @@ with image_blocks as demo:
     
     with gr.Row():
         with gr.Column():
-            human_url = gr.Textbox(label='Human Image URL', placeholder='Enter URL of the human image')
-            btn_load_human = gr.Button('Load Human Image')
+            # human_url = gr.Textbox(label='Human Image URL', placeholder='Enter URL of the human image')
+            # btn_load_human = gr.Button('Load Human Image')
             imgs = gr.ImageEditor(sources='upload', type="pil", label='Human. Mask with pen or use auto-masking', interactive=True)
             with gr.Row():
                 category = gr.Radio(choices=["upper_body", "lower_body", "dresses"], label="Select Garment Category", value="upper_body")
@@ -297,8 +297,8 @@ with image_blocks as demo:
             )
 
         with gr.Column():
-            garment_url = gr.Textbox(label='Garment Image URL', placeholder='Enter URL of the garment image')
-            btn_load_garment = gr.Button('Load Garment Image')
+            # garment_url = gr.Textbox(label='Garment Image URL', placeholder='Enter URL of the garment image')
+            # btn_load_garment = gr.Button('Load Garment Image')
             garm_img = gr.Image(label="Garment", sources='upload', type="pil")
             with gr.Row(elem_id="prompt-container"):
                 with gr.Row():
@@ -324,8 +324,8 @@ with image_blocks as demo:
                 number_of_images = gr.Number(label="Number Of Images To Generate (it will start from your input seed and increment by 1)", minimum=1, maximum=9999, value=1, step=1)
 
 
-    btn_load_human.click(fn=lambda url: load_image_from_url(url), inputs=human_url, outputs=imgs)
-    btn_load_garment.click(fn=lambda url: load_image_from_url(url), inputs=garment_url, outputs=garm_img)
+    # btn_load_human.click(fn=lambda url: load_image_from_url(url), inputs=human_url, outputs=imgs)
+    # btn_load_garment.click(fn=lambda url: load_image_from_url(url), inputs=garment_url, outputs=garm_img)
     try_button.click(fn=start_tryon, inputs=[imgs, garm_img, prompt, category, is_checked, is_checked_crop, denoise_steps, is_randomize_seed, seed, number_of_images], outputs=[image_gallery, masked_img],api_name='tryon')
 
 image_blocks.launch(inbrowser=True,share=args.share)
